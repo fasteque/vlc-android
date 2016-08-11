@@ -28,6 +28,7 @@ import java.lang.ref.WeakReference;
 @SuppressWarnings("JniMissingFunction")
 abstract class VLCObject<T extends VLCEvent> {
     private VLCEvent.Listener<T> mEventListener = null;
+    private IMediaPlayer.Callback mMediaPlayerCallback = null;
     private Handler mHandler = null;
     private int mNativeRefCount = 1;
 
@@ -92,6 +93,14 @@ abstract class VLCObject<T extends VLCEvent> {
             mHandler = new Handler(Looper.getMainLooper());
     }
 
+    public synchronized void setMediaPlayerCallback(IMediaPlayer.Callback callback) {
+        if (mHandler != null)
+            mHandler.removeCallbacksAndMessages(null);
+        mMediaPlayerCallback = callback;
+        if (mMediaPlayerCallback != null && mHandler == null)
+            mHandler = new Handler(Looper.getMainLooper());
+    }
+
     /**
      * Called when libvlc send events.
      *
@@ -112,27 +121,35 @@ abstract class VLCObject<T extends VLCEvent> {
     /* JNI */
     @SuppressWarnings("unused") /* Used from JNI */
     private long mInstance = 0;
-    private synchronized void dispatchEventFromNative(int eventType, long arg1, float arg2) {
+    private synchronized void dispatchEventFromNative(final int eventType, long arg1, float arg2) {
         if (isReleased())
             return;
         final T event = onEventNative(eventType, arg1, arg2);
 
         class EventRunnable implements Runnable {
             private final VLCEvent.Listener<T> listener;
+            private final IMediaPlayer.Callback callback;
             private final T event;
 
-            private EventRunnable(VLCEvent.Listener<T> listener, T event) {
+            private EventRunnable(VLCEvent.Listener<T> listener, IMediaPlayer.Callback callback, T event) {
                 this.listener = listener;
+                this.callback = callback;
                 this.event = event;
             }
             @Override
             public void run() {
-                listener.onEvent(event);
+                if (listener != null) {
+                    listener.onEvent(event);
+                }
+
+                if (callback != null) {
+                    callback.onMediaPlayerEvent(event.type);
+                }
             }
         }
 
-        if (event != null && mEventListener != null && mHandler != null)
-            mHandler.post(new EventRunnable(mEventListener, event));
+        if (event != null && (mEventListener != null || mMediaPlayerCallback != null) && mHandler != null)
+            mHandler.post(new EventRunnable(mEventListener, mMediaPlayerCallback, event));
     }
     private native void nativeDetachEvents();
 
